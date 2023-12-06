@@ -1,0 +1,947 @@
+from cmu_graphics import *
+import random, math
+from PIL import Image
+import os, pathlib
+
+#Plant class
+class Plant: 
+    def __init__(self, app, name, health, damage, sunCost): 
+        self.app = app
+        self.name = name
+        self.health = health
+        self.damage = damage
+        self.sunCost = sunCost
+        self.row = None
+        self.col = None
+        self.peas = []
+        self.hasPeas = False
+        self.projectiles = Projectiles(app)
+        self.updateCoordinates(app)
+    
+    def updateCoordinates(self, app):
+        if self.row is not None and self.col is not None: 
+            self.x, self.y = getCellLeftTop(app, self.row, self.col)
+            
+    def attack(self):
+        return self.damage
+
+    def takeDamage(self, damage):
+        self.health -= damage
+        return self.health
+
+    def shootPeas(self, plant, app):
+        if self.name in ['pea', 'repeater', 'ice pea']:
+            if self.name == 'repeater':
+                if app.onStepCounter % app.repeaterPeasSpeed == 0:
+                    self.projectiles.addPea(plant, self.app)
+            elif app.onStepCounter % app.shootPeasSpawnSpeed == 0: 
+                self.projectiles.addPea(plant, self.app)
+ 
+
+#Zombies Class
+class Zombie: 
+    def __init__(self, name, health, damage, app):
+        self.name = name
+        self.health = health
+        self.damage = damage
+        self.row = None
+        self.col = None
+        self.app = app
+        self.updateCoordinates(app)
+
+    def updateCoordinates(self, app):
+        if self.row is not None and self.col is not None:
+            self.x, self.y = getCellLeftTop(app, self.row, self.col) 
+
+    def attack(self):
+        return self.damage
+
+    def takeDamage(self, damage):
+        self.health -= damage
+    
+
+#Pea Class
+class Pea:
+    def __init__(self, name, row, col, damage, app):
+        self.name = name
+        self.row = row
+        self.col = col
+        self.x = col * app.cellWidth
+        #centered on row
+        self.y = (row + 0.5) * app.cellHeight
+        self.damage = damage 
+
+class Projectiles:
+    def __init__(self, app):
+        self.app = app
+        self.projectiles = []
+
+    def addPea(self, plant, app):
+        if plant.name == 'pea':
+            damage = getPlantDamage(plant.name)
+            newPea = Pea('pea', plant.row, plant.col, damage, app)
+        elif plant.name == 'ice pea':
+            damage = getPlantDamage(plant.name)
+            newPea = Pea('ice pea', plant.row, plant.col, damage, app)
+        elif plant.name == 'repeater':
+            damage = getPlantDamage(plant.name)
+            newPea = Pea('repeater', plant.row, plant.col, damage, app)
+        self.projectiles.append(newPea)
+    
+    def moveProjectiles(self, app, plant):
+        for pea in self.projectiles:
+            #update pea.x position
+            pea.x += app.stepsPerSecond / app.projectileSpeed
+            #if pea out of bounds, then remove pea
+            if pea.x > app.boardx1:
+                plant.projectiles.projectiles.remove(pea)
+            #if there is no zombie in the row of the pea, don't shoot
+            if not zombieInRow(app, plant):
+                plant.projectiles.projectiles.remove(pea)
+            else: 
+                #center of the plant row
+                plantRowY = pea.row * app.cellHeight + app.cellHeight / 2
+                #sin function with amp and freqeuency
+                if plant.name == "repeater":
+                    pea.y = (plantRowY + math.sin((pea.x)/ 15) * 10) - 5
+                else: pea.y = (plantRowY + math.sin((pea.x)/ 15) * 15) - 5 
+
+    def drawProjectiles(self, app):
+        for pea in self.projectiles:
+            peaImage = getPeaImage(app,pea)
+            newBallWidth, newBallHeight = getBallWidthHeight(app, pea) 
+            drawImage(peaImage, pea.x + app.boardLeft, pea.y + app.boardTop, width = newBallWidth, height = newBallHeight)
+
+class Sun: 
+    def __init__(self, x, y, value):
+        self.x = x
+        self.y = y
+        self.value = value
+
+#graphics
+def onAppStart(app):
+    app.screen = 'welcome'
+    app.plants = []
+    app.zombies = []
+    app.suns = []
+    app.plantsPerRowCount = []
+    app.sunValue = 25
+    app.sunCount = 100
+    app.isSeedSelected = False
+    app.selectedSeed = None
+    app.draggedSeed = False
+    app.plantAdded = False
+    app.isShovelSelected = False
+    app.draggedShovel = False
+    app.isSunSelected = True
+    #dimensions
+    app.buttonWidth = 46
+    app.buttonHeight = 63
+    app.plantWidth = 55
+    app.plantHeight = 55
+    app.zombieWidth = 65
+    app.zombieHeight = 70
+    app.boxX0 = 150
+    app.boxX1 = 549
+    app.boxY0 = 0
+    app.boxY1 = 77
+    app.isFirstPlant = False
+    app.isPlantAlive = None
+    app.isZombieAlive = None
+    app.isPlantThere = False
+    app.onStepCounter = 0
+    app.stepsPerSecond = 60
+    app.width = 880
+    app.height = 485
+    if app.screen == 'game':
+        app.width = 1000
+        app.height = 429
+    app.isGameLost = False
+    app.isGameWon = False
+    app.isLeaderDead = False
+    app.paused = False
+    app.zombieThreshold = 8
+    app.zombieCount = 0
+    app.maxZombieCount = 25 
+    app.leaderZombieCount = 0
+
+    #music
+    app.music = loadSound("sounds/themeSong.mp3")
+    app.playing = False
+
+    #board
+    app.rows = 5
+    app.cols = 9 
+    app.board = [ [0]*app.cols for row in range(app.rows) ]
+    app.boardLeft = 175
+    app.boardTop = 50
+    app.boardWidth = 530
+    app.boardHeight = 360
+    app.boxStartX = 220
+    app.boardx0 = 175
+    app.boardx1 = 500
+    app.boardy0 = 50
+    app.boardy1 = 410
+
+    #speeds
+    app.shootPeasSpawnSpeed = 60 
+    app.repeaterPeasSpeed = 30
+    app.zombieSpawnSpeed = 360
+    app.sunSpawnSpeed = 160
+    app.projectileSpeed = 60
+    app.damageSpeed = 60
+
+    #opening images
+    app.welcomeImage = Image.open("PVZ images/welcome.jpg")
+    app.endImage = Image.open("PVZ images/end.png")
+    app.dayImage = Image.open("PVZ images/day.jpg")
+    app.nightImage = Image.open("PVZ images/night.png")
+    app.plantBox = Image.open("PVZ images/plant box.png")
+    app.sunflower = Image.open("PVZ images/sunflower.png")
+    app.pea = Image.open("PVZ images/pea.png")
+    app.icePea = Image.open("PVZ images/ice pea.png")
+    app.walnut = Image.open("PVZ images/walnut.png")
+    app.repeater = Image.open("PVZ images/repeater.png")
+    app.sunflowerSeed = Image.open("PVZ images/sunflower seed.png")
+    app.walnutSeed = Image.open("PVZ images/walnut seed.png")
+    app.icePeaSeed = Image.open("PVZ images/ice pea seed.png")
+    app.peaSeed = Image.open("PVZ images/pea seed.png")
+    app.repeaterSeed = Image.open("PVZ images/repeater seed.png")
+    app.shovel = Image.open("PVZ images/shovel.png")
+    app.shovelBox = Image.open("PVZ images/shovel button.png")
+    app.sunCountBox = Image.open("PVZ images/sun count box.png")
+    app.normal  = Image.open("PVZ images/normal.png")
+    app.conehead = Image.open("PVZ images/conehead.png")
+    app.flag = Image.open("PVZ images/flag.png")
+    app.newspaper = Image.open("PVZ images/newspaper.png")
+    app.buckethead = Image.open("PVZ images/buckethead.png")
+    app.mummy = Image.open("PVZ images/buckethead mummy.png")
+    app.peaBall = Image.open("PVZ images/pea ball.png")
+    app.icePeaBall = Image.open("PVZ images/ice pea ball.png")
+    app.sun = Image.open("PVZ images/sun.png")
+    app.repeaterBall = Image.open("PVZ images/pea ball.png")
+
+
+    #resizing images
+    app.welcImageWidth, app.welcImageHeight = app.welcomeImage.width, app.welcomeImage.height
+    app.pboxWidth, app.pboxHeight = app.plantBox.width, app.plantBox.height
+    app.shovelBoxWidth, app.shovelBoxHeight = app.shovelBox.width, app.shovelBox.height
+    app.sunCountBoxWidth, app.sunCountBoxHeight =  app.sunCountBox.width, app.sunCountBox.height
+    app.sfSeedWidth, app.sfSeedHeight = app.sunflowerSeed.width, app.sunflowerSeed.height
+    app.walSeedWidth, app.walSeedHeight = app.walnutSeed.width, app.walnutSeed.height
+    app.iceSeedWidth, app.iceSeedHeight = app.icePeaSeed.width, app.icePeaSeed.height
+    app.repSeedWidth, app.repSeedHeight = app.repeaterSeed.width, app.repeaterSeed.height
+    app.peaSeedWidth, app.peaSeedHeight = app.peaSeed.width, app.peaSeed.height
+    app.shovelWidth, app.shovelHeight = app.shovel.width, app.shovel.height
+    app.sunWidth, app.sunHeight = app.sun.width, app.sun.height
+    app.peaBallWidth, app.peaBallHeight = app.peaBall.width, app.peaBall.height
+    app.iceBallWidth, app.iceBallHeight = app.icePeaBall.width, app.icePeaBall.height
+    app.mapImageWidth, app.mapImageHeight = app.dayImage.width - 100, app.dayImage.height
+
+    #Casting image type
+    app.welcomeImage = CMUImage(app.welcomeImage)
+    app.endImage = CMUImage(app.endImage)
+    app.dayImage = CMUImage(app.dayImage)
+    app.nightImage = CMUImage(app.nightImage)
+    app.plantBox = CMUImage(app.plantBox)
+    app.sunflower = CMUImage(app.sunflower)
+    app.pea = CMUImage(app.pea)
+    app.icePea = CMUImage(app.icePea)
+    app.repeater = CMUImage(app.repeater)
+    app.walnut = CMUImage(app.walnut)
+    app.shovel = CMUImage(app.shovel)
+    app.shovelBox = CMUImage(app.shovelBox)
+    app.sunCountBox = CMUImage(app.sunCountBox)
+    app.sunflowerSeed = CMUImage(app.sunflowerSeed)
+    app.walnutSeed = CMUImage(app.walnutSeed)
+    app.icePeaSeed = CMUImage(app.icePeaSeed)
+    app.peaSeed = CMUImage(app.peaSeed)
+    app.repeaterSeed = CMUImage(app.repeaterSeed)
+    app.normal = CMUImage(app.normal)
+    app.conehead = CMUImage(app.conehead)
+    app.flag = CMUImage(app.flag)
+    app.newspaper = CMUImage(app.newspaper)
+    app.buckethead = CMUImage(app.buckethead)
+    app.mummy = CMUImage(app.mummy)
+    app.peaBall = CMUImage(app.peaBall)
+    app.icePeaBall = CMUImage(app.icePeaBall)
+    app.sun = CMUImage(app.sun)
+    app.repeaterBall = CMUImage(app.repeaterBall)
+
+def loadSound(relativePath):
+    absolutePath = os.path.abspath(relativePath)
+    url = pathlib.Path(absolutePath).as_uri()
+    return Sound(url)
+
+#board
+def drawBoard(app):
+    for row in range(app.rows):
+        for col in range(app.cols):
+            drawCell(app, row, col)
+
+def drawCell(app, row, col):
+    cellLeft, cellTop = getCellLeftTop(app, row, col)
+    cellWidth, cellHeight = getCellSize(app)
+    drawRect(cellLeft, cellTop, cellWidth, cellHeight, fill = None, border = 'black')
+
+def getCellLeftTop(app, row, col):
+    cellWidth, cellHeight = getCellSize(app)
+    cellLeft = app.boardLeft + col * cellWidth
+    cellTop = app.boardTop + row * cellHeight
+    return (cellLeft, cellTop) 
+
+def getCellCenter(app, row, col):
+    cellWidth, cellHeight = getCellSize(app)
+    cellCenterX = app.boardLeft + (col + 0.5) * cellWidth
+    cellCenterY = app.boardTop + (row + 0.5) * cellHeight
+    return (cellCenterX, cellCenterY)
+
+def getCellSize(app):
+    cellWidth = app.boardWidth / app.cols
+    cellHeight = app.boardHeight / app.rows
+    return (cellWidth, cellHeight)
+
+def getCell(app, x, y):
+    dx = x - app.boardLeft
+    dy = y - app.boardTop
+    app.cellWidth, app.cellHeight = getCellSize(app)
+    row = math.floor(dy/ app.cellHeight) 
+    col = math.floor(dx/ app.cellWidth)
+    if (0 <= row < app.rows) and (0 <= col < app.cols):
+      return (row, col)
+    else:
+      return None
+
+#add plant to the board
+def addPlantToBoard(app, plant, row, col):
+    if app.board[row][col] == 0:
+        app.plants.append(plant)
+        plant.row = row
+        plant.col = col
+        app.board[row][col] = plant
+
+def removePlantFromBoard(app, plant, row, col):
+    row, col = plant.row, plant.col
+    app.board[row][col] = 0
+    app.plants.remove(plant)
+
+def drawPlants(app):
+    for plant in app.plants:
+        (row, col) = (plant.row, plant.col)
+        if row is not None and col is not None:
+            cellLeft, cellTop = getCellLeftTop(app, row, col)
+            drawImage(getPlantImage(app, plant), cellLeft, cellTop, width = app.plantWidth, height= app.plantHeight)
+
+def zombieInRow(app, plant): 
+    for zombie in app.zombies:
+        if zombie.row == plant.row:
+            return True
+    return False
+        
+def drawPeas(app):
+    for plant in app.plants:
+        plant.projectiles.drawProjectiles(app) 
+
+def movePea(app):
+    for plant in app.plants:
+            plant.projectiles.moveProjectiles(app, plant)
+
+def getBallWidthHeight(app, pea):
+    if pea.name == 'pea':
+        newBallWidth, newBallHeight = app.peaBallWidth//8, app.peaBallHeight//8
+    if pea.name == "ice pea":
+        newBallWidth, newBallHeight = app.iceBallWidth//8, app.iceBallHeight//8
+    if pea.name == 'repeater':
+        newBallWidth, newBallHeight = app.peaBallWidth//8, app.peaBallHeight//8 
+    return newBallWidth, newBallHeight
+
+def getPeaImage(app, pea):
+    if pea.name == 'pea':
+        return app.peaBall
+    if pea.name == "ice pea":
+        return app.icePeaBall
+    if pea.name == 'repeater':
+        return app.repeaterBall
+
+#zombies
+def createNewZombie(zombieName, app):
+    newZombieName = zombieName
+    newZombieHealth = getZombieHealth(zombieName)
+    newZombieDamage = getZombieDamage(zombieName)
+    newZombie = Zombie(newZombieName, newZombieHealth, newZombieDamage, app)
+    return newZombie
+
+def generateRandomZombies(app):  
+    #randomly choose a row to add zombie
+    randRow = random.randrange(0, app.rows)
+    #use random number corresponding to type to generate zombies
+    newZombie = createNewZombie('normal', app)
+    addZombieToBoard(app, newZombie, randRow, app.cols-1)
+    newZombie.updateCoordinates(app)
+
+def generateAIZombies(app):
+    if app.onStepCounter % app.zombieSpawnSpeed == 0 and app.zombieCount < app.maxZombieCount + 1:
+        #update zombie speed
+        # if app.zombieCount >= 10:
+        #     app.zombieSpawnSpeed = 300
+        
+        #if less than 3 plants: generate random normal zombie
+        if len(app.plants) < 3: 
+            generateRandomZombies(app)
+        
+        #for the last zombie, generate the singular flag zombie that determines victory or loss
+        elif app.zombieCount == app.maxZombieCount - 1:
+            randRow = random.randrange(0, app.rows)
+            newZombie = createNewZombie('flag', app)
+            addZombieToBoard(app, newZombie, randRow, app.cols-1)
+            newZombie.updateCoordinates(app)
+
+        #if more than 3 plants: select row with least amount of plants
+        else:
+            #check if everyRow has a plant
+            if doesEveryRowHavePlant(app): 
+                leastPlantsRow, isRow0, isTie = checkRowWithLessPlants(app)
+                #generate conehead if there is a row with least plants
+                if isRow0:
+                    newZombie = createNewZombie('conehead', app)
+                    addZombieToBoard(app, newZombie, leastPlantsRow, app.cols-1)
+                    newZombie.updateCoordinates(app)
+
+                #if there is a tie for least rows, generate newspaper zombie among the tie rows
+                elif isTie:
+                    tieRows = getLeastTieRows(app)
+                    randRow = random.choice(tieRows)
+                    newZombie = createNewZombie('newspaper', app)
+                    addZombieToBoard(app, newZombie, randRow, app.cols-1)
+                    newZombie.updateCoordinates(app)
+
+            #check to see which row has most plants, generate buckethead if there is a max row
+            (mostPlantsRow, mostPlantsRowCount, isRow0, isTie) = checkRowWithMostPlants(app)
+            if not isTie and isRow0 and mostPlantsRowCount > 2:
+                newZombie = createNewZombie('buckethead', app)
+                addZombieToBoard(app, newZombie, mostPlantsRow, app.cols-1)
+                newZombie.updateCoordinates(app)
+
+            #if tie for rows with most plants, generate mummy among tie rows
+            elif isTie:
+                rowTies = getMostTieRows(app)
+                randRow = random.choice(rowTies)
+                newZombie = createNewZombie('mummy', app)
+                addZombieToBoard(app, newZombie, randRow, app.cols-1)
+                newZombie.updateCoordinates(app)
+            
+#returns count of plants per row
+def plantPerRowCount(app):
+    app.plantsPerRowCount = [0] *app.rows
+    for row in range(app.rows):
+        for col in range(app.cols):
+            if app.board[row][col] != 0:
+                app.plantsPerRowCount[row] += 1
+    return app.plantsPerRowCount
+
+#returns rows with least plant tie
+def getLeastTieRows(app):
+    app.plantsPerRowCount = plantPerRowCount(app)
+    leastPlantsRowCount = 999999
+    uniqueCounts = set()
+    rowsWithTies = []
+
+    for row in range(app.rows):
+        currCount = app.plantsPerRowCount[row]
+        if currCount < leastPlantsRowCount:
+            leastPlantsRowCount = currCount
+            rowsWithTies = [row]
+        elif currCount == leastPlantsRowCount:
+            rowsWithTies.append(row)
+        uniqueCounts.add(currCount)
+    return rowsWithTies
+
+def doesEveryRowHavePlant(app):
+    app.plantsPerRowCount = plantPerRowCount(app)
+    tempSet = set(app.plantsPerRowCount)
+    if 0 in tempSet:
+        return False
+    return True
+
+def isPlantCountTie(app):
+    app.plantsPerRowCount = plantPerRowCount(app)
+    tempSet = set(app.plantsPerRowCount)
+    if len(tempSet) < len(app.plantsPerRowCount):
+        return True
+    else:
+        return False
+
+def checkRowWithLessPlants(app):
+    app.plantsPerRowCount = plantPerRowCount(app)
+    leastPlantsRowCount = 0
+    leastPlantsRow = 0
+    isRow0 = False
+    uniqueCounts = set()
+
+    for row in range(app.rows):
+        currCount = app.plantsPerRowCount[row]
+        if currCount < app.plantsPerRowCount[leastPlantsRow]:
+            leastPlantsRow = row
+            leastPlantsRowCount = currCount
+            isRow0 = True
+        uniqueCounts.add(currCount)
+    isTie = len(uniqueCounts) != len(app.plantsPerRowCount)
+
+    return leastPlantsRow, isRow0, isTie
+
+def checkRowWithMostPlants(app):
+    app.plantsPerRowCount = plantPerRowCount(app)
+    mostPlantsRowCount = 0
+    uniqueCounts = set()
+    mostPlantsRow = 0
+    isRow0 = False
+
+    for row in range(app.rows):
+        currCount = app.plantsPerRowCount[row]
+        if currCount > app.plantsPerRowCount[mostPlantsRow]:
+            mostPlantsRow = row
+            mostPlantsRowCount = currCount
+            isRow0 = True
+        uniqueCounts.add(currCount)
+    
+    isTie = len(uniqueCounts) != len(app.plantsPerRowCount)
+
+    return (mostPlantsRow, mostPlantsRowCount, isRow0, isTie)
+
+def getMostTieRows(app):
+    app.plantsPerRowCount = plantPerRowCount(app)
+    mostPlantsRowCount = 0
+    uniqueCounts = set()
+    rowsWithTies = []
+
+    for row in range(app.rows):
+        currCount = app.plantsPerRowCount[row]
+        if currCount > mostPlantsRowCount:
+            mostPlantsRowCount = currCount
+            rowsWithTies = [row]
+        elif currCount == mostPlantsRowCount:
+            rowsWithTies.append(row)
+        uniqueCounts.add(currCount)
+    return rowsWithTies
+    
+def moveZombies(app):
+    for zombie in app.zombies:
+            if zombie.col >= 0:
+                isPlant = False
+                for plant in app.plants:
+                    if plant.x < zombie.x:
+                        if plant.row == zombie.row and abs(zombie.x - plant.x) < app.cellWidth:
+                            isPlant = True
+                if isPlant == False:
+                    #set old position back to 0
+                    app.board[zombie.row][int(zombie.col)]= 0 
+                    distance = (app.stepsPerSecond/20000)
+                    zombie.col -= distance
+                    zombie.updateCoordinates(app)
+
+def addZombieToBoard(app, zombie, row, col):
+    if app.board[row][col] == 0:
+        app.zombies.append(zombie)
+        zombie.row = row
+        zombie.col = col
+        app.board[row][col] = zombie
+        app.zombieCount += 1
+
+def removeZombieFromBoard(app, zombie, row, col):
+    row, col = int(zombie.row), int(zombie.col)
+    app.board[row][col] = 0
+    app.zombies.remove(zombie)
+    if zombie.name == 'flag':
+        app.isLeaderDead = True
+        app.isGameWon = True
+
+def drawZombies(app):
+    for zombie in app.zombies:
+        (row, col) = zombie.row, zombie.col
+        if row is not None and col is not None:
+            cellLeft, cellTop = getCellLeftTop(app, row, col)
+            drawImage(getZombieImage(app, zombie), cellLeft, cellTop, width = app.zombieWidth, height= app.zombieHeight)
+
+def getZombieImage(app, zombie):
+    if zombie.name == 'normal':
+        return app.normal
+    if zombie.name == 'conehead':
+        return app.conehead
+    if zombie.name == 'newspaper':
+        return app.newspaper
+    if zombie.name == 'buckethead':
+        return app.buckethead
+    if zombie.name == 'flag':
+        return app.flag
+    if zombie.name == 'mummy':
+        return app.mummy
+
+#check plant name to get the image
+def getPlantImage(app, plant):
+    if plant.name == 'sunflower': 
+        return app.sunflower
+    elif plant.name == 'pea': 
+        return app.pea
+    elif plant.name == 'ice pea': 
+        return app.icePea
+    elif plant.name == 'repeater': 
+        return app.repeater
+    elif plant.name == 'walnut': 
+        return app.walnut
+
+def getPlantHealth(plantName):
+    if plantName == 'sunflower': 
+        return 20
+    elif plantName == 'pea': 
+        return 30
+    elif plantName == 'ice pea': 
+        return 30
+    elif plantName == 'repeater': 
+        return 30
+    elif plantName == 'walnut': 
+        return 40 
+    
+def getZombieHealth(zombieName):
+    if zombieName == 'normal':
+        return 60
+    elif zombieName == 'conehead':
+        return 90
+    elif zombieName == 'newspaper':
+        return 100
+    elif zombieName == 'buckethead':
+        return 120
+    elif zombieName == 'mummy':
+        return 130
+    elif zombieName == 'flag':
+        return 130
+    
+def getZombieDamage(zombieName):
+    if zombieName == 'normal':
+        return 10
+    elif zombieName == 'conehead':
+        return 20
+    elif zombieName == 'newspaper':
+        return 20
+    elif zombieName == 'buckethead':
+        return 30
+    elif zombieName == 'mummy':
+        return 30
+    elif zombieName == 'flag':
+        return 30
+
+def getPlantDamage(plantName):
+    if plantName == 'sunflower': 
+        return 0
+    elif plantName == 'pea': 
+        return 10
+    elif plantName == 'ice pea': 
+        return 15
+    elif plantName == 'repeater': 
+        return 10
+    elif plantName == 'walnut': 
+        return 0
+
+def getPlantSunCost(plantName):
+    if plantName == 'sunflower': 
+        return 50
+    elif plantName == 'pea': 
+        return 100
+    elif plantName == 'ice pea': 
+        return 175
+    elif plantName == 'repeater': 
+        return 200
+    elif plantName == 'walnut': 
+        return 50 
+    
+def generateSun(app):
+    if len(app.suns) <= 10 and app.onStepCounter % app.sunSpawnSpeed == 0: 
+        sunX = random.randrange(0, app.width - 100)
+        sunY = random.randrange(0, app.height - 50)
+        if not (app.boxX0 < sunX < app.boxX1 and app.boxY0 < sunY < app.boxY1) and not isShovelButton(sunX, sunY):
+                newSun = Sun(sunX, sunY, app.sunValue)
+                app.suns.append(newSun)
+        else:
+            generateSun(app)
+
+def drawSuns(app):
+    for sun in app.suns:
+        newSunWidth, newSunHeight = app.sunWidth//5, app.sunHeight//5
+        drawImage(app.sun, sun.x, sun.y, width = newSunWidth, height = newSunHeight)
+
+def removeSunFromBoard(app, sun):
+    app.suns.remove(sun)
+
+def onKeyPress(app, key):
+    if key == 'a':
+        app.screen = 'welcome'
+    elif key == 'space':
+        app.screen = 'game'
+        app.width =  app.mapImageWidth
+        app.height = app.mapImageHeight
+        if not app.playing:
+            app.music.play(loop = True)
+            app.playing = True
+
+#helper function to check if user clicked inside seed button 
+def isSeedButton(mouseX, mouseY):
+    bWidth = 46
+    bHeight = 63
+    y0 = 7
+    y1 = y0 + bHeight
+    if (y0 < mouseY < y1):
+        if (220 < mouseX < (220 + bWidth)): 
+            return 'sunflower'
+        if (277 < mouseX < (277 + bWidth)): 
+            return 'pea'  
+        if (330 < mouseX < (330 + bWidth)): 
+            return 'repeater'
+        if (385 < mouseX < (385 + bWidth)): 
+            return 'ice pea'  
+        if (439 < mouseX < (439 + bWidth)): 
+            return 'walnut' 
+        
+def isShovelButton(mouseX, mouseY):
+    shovelHeight = 47
+    shovelWidth = 46
+    if (0 < mouseY < shovelHeight):
+        if (550 < mouseX < (550 +shovelWidth)):
+            return 'shovel'
+        
+def isSun(app, mouseX, mouseY):
+    for sun in app.suns:
+        newSunWidth, newSunHeight = app.sunWidth//4, app.sunHeight//4
+        left, top = sun.x, sun.y
+        right, bottom = left + newSunWidth, top + newSunHeight
+        if (left <= mouseX <= right) and (top <= mouseY <= bottom):
+            return sun
+
+def onStep(app):
+    if app.screen == "game":
+        if app.paused == False:
+            app.onStepCounter += 1
+            if len(app.plants) > 0:
+                generateAIZombies(app)
+            checkCollision(app)
+            if app.onStepCounter % 2 == 0: 
+                moveZombies(app)
+            for plant in app.plants:
+                if zombieInRow(app, plant):
+                    plant.shootPeas(plant, app) 
+            (app)
+            movePea(app)
+            generateSun(app)
+            checkIsGameLost(app)
+            checkIsGameWon(app)
+            
+def checkIsGameLost(app):
+    #if lost
+    for zombie in app.zombies:
+        cellLeft, cellTop = getCellLeftTop(app, 0, 0)
+        if zombie.x < cellLeft:
+            app.isGameLost = True
+
+def checkIsGameWon(app):
+    if app.isLeaderDead == True or (app.zombieCount > 0 and len(app.zombies) == 0): 
+        app.isGameWon == True
+        
+def onMousePress(app, mouseX, mouseY): 
+    #create the image of the plant seed to drag 
+    selectedSeed = isSeedButton(mouseX, mouseY)
+    selectedShovel = isShovelButton(mouseX, mouseY)
+    selectedSun = isSun(app, mouseX, mouseY)
+    if selectedSeed:
+        app.selectedSeed = selectedSeed
+        app.isSeedSelected = True
+        app.isShovelSelected = False
+        app.isSunSelected = False
+    
+    elif selectedShovel:
+        app.isSeedSelected = False
+        app.isShovelSelected = True
+        app.isSunSelected = False
+    
+    elif selectedSun:
+        app.sunCount += selectedSun.value
+        removeSunFromBoard(app, selectedSun)
+
+
+def getSeedImage(app, selectedSeed):
+    if selectedSeed == 'sunflower':
+        return app.sunflowerSeed
+    elif selectedSeed == 'pea':
+        return app.peaSeed
+    elif selectedSeed == 'repeater':
+        return app.repeaterSeed
+    elif selectedSeed == 'ice pea':
+        return app.icePeaSeed
+    elif selectedSeed == 'walnut':
+        return app.walnutSeed
+    
+
+def onMouseDrag(app, mouseX, mouseY):
+    #drag the image of the plant seed to a cell
+    if app.isSeedSelected:
+        app.draggedSeed = True
+        app.draggedSeedX, app.draggedSeedY = mouseX - app.buttonWidth/2, mouseY - app.buttonHeight/2
+    elif app.isShovelSelected:
+        app.draggedShovel = True
+        app.draggedShovelX, app.draggedShovelY = mouseX - app.buttonWidth/2, mouseY - app.buttonHeight/2
+
+
+def onMouseRelease(app, mouseX, mouseY):
+    #if it is in a cell and if the cell is empty,
+    # then delete the seed image and create a plant image
+    if app.draggedSeed: 
+        row, col = getCell(app, mouseX, mouseY)
+        #check if the cell is empty
+        if row is not None and col is not None and app.board[row][col] == 0:
+            tempPlant = Plant(app, app.selectedSeed, 0, 0, 0)
+            newPlantName = app.selectedSeed
+            newPlantHealth = getPlantHealth(newPlantName)
+            newPlantDamage = getPlantDamage(newPlantName)
+            newPlantSunCost = getPlantSunCost(newPlantName)
+            newPlant = Plant(app, newPlantName, newPlantHealth, newPlantDamage, newPlantSunCost)
+            if app.sunCount >= newPlantSunCost:  
+                addPlantToBoard(app, newPlant, row, col)
+                newPlant.updateCoordinates(app)
+                app.sunCount -= newPlantSunCost
+                app.draggedSeed = False
+                app.isSeedSelected = False
+                if newPlantName == 'sunflower':
+                    if app.zombieCount > app.zombieThreshold: 
+                        app.sunSpawnSpeed -= 5
+                    else: app.sunSpawnSpeed -= 10
+            app.draggedSeed = False
+            app.isSeedSelected = False
+        elif row is not None and col is not None and app.board[row][col] != 0:
+            app.draggedSeed = False
+            app.isSeedSelected = False
+        else:
+            app.draggedSeed = False
+            app.isSeedSelected = False
+    elif app.draggedShovel:
+        row, col = getCell(app, mouseX, mouseY)
+        if row is not None and col is not None and app.board[row][col] != 0:
+            removedPlant = app.board[row][col]
+            removePlantFromBoard(app, removedPlant, row, col)
+            app.draggedShovel = False
+            app.isShovelSelected = False
+        elif row is not None and col is not None and app.board[row][col] == 0:
+            app.draggedShovel = False
+            app.isShovelSelected = False
+
+def checkCollision(app):
+    #if plant and zombie are in the within a cellWidth of eachother
+    for plant in app.plants: 
+        for zombie in app.zombies:
+            #if the plant is still ahead of zombie
+            if plant.x <= zombie.x:  
+                if plant.row == zombie.row and abs(zombie.x - plant.x) < app.cellWidth:
+                        applyDamage(app, plant, zombie)
+   
+    #if pea hits zombie
+    for plant in app.plants:
+        for pea in plant.projectiles.projectiles:
+            for zombie in app.zombies:
+                #if in the row and within 10 distance of zombie coordinate
+                if pea.row == zombie.row and abs(pea.x - (zombie.col * app.cellWidth)) < 10:
+                    applyPeaDamage(app, pea, zombie)
+                    plant.projectiles.projectiles.remove(pea)
+
+
+def applyPeaDamage(app, pea, zombie):
+    zombie.takeDamage(pea.damage)
+    if zombie.health <= 0:
+        removeZombieFromBoard(app, zombie, zombie.row, zombie.col)
+
+def applyDamage(app, plant, zombie):
+    if app.onStepCounter % app.damageSpeed == 0:
+        plant.health -= zombie.attack()
+        zombie.health -= plant.attack()
+
+    #remove any plants or zombies that died
+    if plant.health <= 0: 
+        removePlantFromBoard(app, plant, plant.row, plant.col)
+    if zombie.health <= 0: 
+        removeZombieFromBoard(app, zombie, zombie.row, zombie.col)
+        
+#start game 
+def redrawStart(app):
+    newWelcWidth, newWelcHeight = (app.welcImageWidth//2, app.welcImageHeight//2)
+    drawImage(app.welcomeImage,0,0, width = newWelcWidth, height = newWelcHeight)
+
+#drawing the plants and zombies
+def redrawGame(app):
+    if not app.isGameLost and not app.paused:
+        drawBoard(app)
+        #draw map for easy day or hard night mode
+        if app.zombieCount > app.zombieThreshold:
+            drawImage(app.nightImage, 0,0, width = app.mapImageWidth + 100, height = app.mapImageHeight)
+        else: 
+            drawImage(app.dayImage,0,0)
+        drawPlants(app)
+        drawPeas(app)
+        drawZombies(app)
+        newPBWidth, newPBHeight = (app.pboxWidth//2, app.pboxHeight//2)
+        drawImage(app.plantBox, 150, 0, width = newPBWidth, height = newPBHeight)
+        #seedboxes
+        newsfSeedWidth, newsfSeedHeight = (app.sfSeedWidth//3, app.sfSeedHeight//3.2)
+        drawImage(app.sunflowerSeed, app.boxStartX, 7, width = newsfSeedWidth, height =newsfSeedHeight)
+
+        newPeaWidth, newPeaHeight = (app.peaSeedWidth//3, app.peaSeedHeight//3.2)
+        drawImage(app.peaSeed, app.boxStartX + 57, 7, width = newPeaWidth, height = newPeaHeight)
+
+        newrepWidth, newrepHeight = (46, app.repSeedHeight//3.2)
+        drawImage(app.repeaterSeed, app.boxStartX + 55*2, 7, width = newrepWidth, height = newrepHeight)
+
+        newiceWidth, newiceHeight = (app.iceSeedWidth//3, app.iceSeedHeight//3.2)
+        drawImage(app.icePeaSeed, app.boxStartX + 55*3, 7, width = newiceWidth, height = newiceHeight)
+
+        newWalSeedWidth, newWalSeedHeight = (app.walSeedWidth//3, app.walSeedHeight//3.2)
+        drawImage(app.walnutSeed, 439, 6.8, width = newWalSeedWidth, height = newWalSeedHeight)
+        #sunbox
+        newSCWidth, newSCHeight = (app.sunCountBoxWidth//2.1, app.sunCountBoxHeight//2.1)
+        drawImage(app.sunCountBox, 158, 55, width = newSCWidth, height= newSCHeight)
+
+        drawLabel(app.sunCount, 180, 65, size = 10)
+        #shovel
+        newSBWidth, newSBHeight = (app.shovelBoxWidth//3, app.shovelBoxHeight//3)
+        drawImage(app.shovelBox, 550, 0, width = newSBWidth, height = newSBHeight)
+
+        if app.draggedSeed:
+            seedImage = getSeedImage(app, app.selectedSeed)
+            drawImage(seedImage, app.draggedSeedX, app.draggedSeedY, width = app.buttonWidth, height = app.buttonHeight)
+        if app.draggedShovel:
+            drawImage(app.shovel, app.draggedShovelX, app.draggedShovelY, width = app.buttonWidth, height = app.buttonHeight)
+        drawSuns(app)
+        if app.isGameWon: 
+            drawLabel("You killed the Zombies!", app.width/2, app.height/2, size = 40, fill = 'darkGreen', bold = True)
+
+    elif app.isGameLost:
+        drawImage(app.endImage, 0,0, width = app.width, height = app.height)
+
+def redrawAll(app):
+    if app.screen == 'welcome':
+        redrawStart(app)
+    elif app.screen == 'game':
+        redrawGame(app)
+
+def main():
+    runApp()
+main()
+
+
+#Citations
+# https://plantsvszombies.fandom.com/wiki/Areas - maps (day, night)
+# https://howtoraiseahappygenius.com/app-plants-vs-zombies/ - Welcome screen
+# https://plantsvszombies.fandom.com/wiki/Sun - sun
+# https://plantsvszombies.fandom.com/wiki/Repeater - repeater
+# https://plantsvszombies.fandom.com/wiki/Sunflower - sunflower
+# https://plantsvszombies.fandom.com/wiki/Shovel - shovel, shovel button
+# https://plantsvszombies.fandom.com/wiki/Snow_Pea - snow pea
+# https://deadliestfiction.fandom.com/wiki/Zombies_(Plants_vs._Zombies) - conehead, buckethead, newspaper, flag zombies
+# https://plantsvszombies.fandom.com/wiki/Seed_packet/Gallery  - seed packets
+# https://plantsvszombies.fandom.com/wiki/Wall-nut - walnut
+# https://plantsvszombies.fandom.com/wiki/Pea/Gallery - pea balls
+# https://www.deviantart.com/knockoffbandit/art/PvZ-Buckethead-Zombie-mummy-first-game-style-903164490 - buckethead mummy
+# https://downloads.khinsider.com/game-soundtracks/album/plants-vs.-zombies - sound
